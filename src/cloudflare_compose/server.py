@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import re
 import shlex
@@ -178,13 +179,13 @@ def nginx_site(machine: str, hostname: str, upstream_port: int, max_body_mb: int
     path = f"/etc/nginx/sites-available/{host}"; link = f"/etc/nginx/sites-enabled/{host}"
     if not replace and run_ssh(machine_data, f"test ! -e {shlex.quote(path)}")["exit_code"] != 0:
         raise ValueError("nginx site already exists; set replace=true to overwrite")
-    encoded = config.encode().hex()
+    encoded = base64.b64encode(config.encode()).decode("ascii")
     sudo = _path_env("CF_COMPOSE_SUDO", "/usr/bin/sudo")
     tee = _path_env("CF_COMPOSE_TEE", "/usr/bin/tee")
     ln = _path_env("CF_COMPOSE_LN", "/usr/bin/ln")
     nginx = _path_env("CF_COMPOSE_NGINX", "/usr/sbin/nginx")
     systemctl = _path_env("CF_COMPOSE_SYSTEMCTL", "/usr/bin/systemctl")
-    write = f"printf %s {encoded} | {sudo} -n {tee} {shlex.quote(path)} >/dev/null && {sudo} -n {ln} -sf {shlex.quote(path)} {shlex.quote(link)} && {sudo} -n {nginx} -t"
+    write = f"printf %s {shlex.quote(encoded)} | /usr/bin/base64 -d | {sudo} -n {tee} {shlex.quote(path)} >/dev/null && {sudo} -n {ln} -sf {shlex.quote(path)} {shlex.quote(link)} && {sudo} -n {nginx} -t"
     tested = run_ssh(machine_data, write)
     if tested["exit_code"] != 0:
         run_ssh(machine_data, f"{sudo} -n /usr/bin/rm -f {shlex.quote(link)} {shlex.quote(path)}")

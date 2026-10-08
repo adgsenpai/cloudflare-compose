@@ -77,6 +77,19 @@ def test_nginx_validation_and_preview(db):
         server.nginx_site("host", "app.example.com", 80)
 
 
+def test_nginx_execute_uses_base64_transport(db, monkeypatch):
+    db.add("machine", "host", {})
+    calls = []
+    def fake(machine, command):
+        calls.append(command)
+        return {"exit_code": 0, "outcome": "success", "output": ""}
+    monkeypatch.setattr(server, "run_ssh", fake)
+    result = server.nginx_site("host", "app.example.com", 8080, execute=True)
+    assert result["outcome"] == "success"
+    assert "/usr/bin/base64 -d" in calls[1]
+    assert "proxy_pass http://127.0.0.1:8080" not in calls[1]
+
+
 def test_http_check(monkeypatch):
     monkeypatch.setattr(server.httpx, "get", lambda *a, **k: type("R", (), {"status_code": 200, "url": "https://example.com/final"})())
     assert server.http_check("https://example.com")["status_code"] == 200
