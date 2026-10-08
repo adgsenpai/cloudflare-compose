@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
+import httpx
 from pathlib import Path
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from .core import Cloudflare, Registry, cf_id, compose_command, name, remote_path, run_ssh
+from .core import Cloudflare, Registry, cf_id, compose_command, name, remote_path, run_ssh, upload_manifest, upload_ssh
 
 mcp = FastMCP("Cloudflare Compose")
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
@@ -75,7 +77,7 @@ def machine_check(machine: str) -> dict:
 
 
 @mcp.tool(annotations=WRITE)
-def compose_run(project: str, action: Literal["status", "logs", "validate", "pull", "up", "stop", "restart", "down"], service: str | None = None, execute: bool = False, tail: int = 100) -> dict:
+def compose_run(project: str, action: Literal["status", "logs", "validate", "pull", "build", "up", "stop", "restart", "down"], service: str | None = None, execute: bool = False, tail: int = 100) -> dict:
     """Inspect or operate a registered Compose project. Mutations default to preview; execute=true applies them. Down preserves volumes. Remote output may contain application secrets."""
     db = registry()
     target = db.get("project", project)
@@ -86,6 +88,136 @@ def compose_run(project: str, action: Literal["status", "logs", "validate", "pul
     result = run_ssh(db.get("machine", target["machine"]), command)
     db.audit(f"compose.{action}", project, result["outcome"])
     return result
+
+
+def _audit_mutation(operation, target, execute, action):
+    if not execute:
+        return None
+    db = registry(); db.audit(operation, target, "started")
+    try:
+        result = action()
+    except Exception:
+        db.audit(operation, target, "failed_or_unknown")
+        raise
+    db.audit(operation, target, result.get("outcome", "success") if isinstance(result, dict) else "success")
+    return result
+
+
+@mcp.tool(annotations=WRITE)
+def project_sync(project: str, local_path: str, execute: bool = False, delete: bool = False) -> dict:
+    """Preview or upload a directory/archive into a registered project, with fixed secret-bearing paths excluded."""
+    target = registry().get("project", project)
+    local = Path(local_path).expanduser().resolve()
+    roots = [Path(x).expanduser().resolve() for x in os.environ.get("CF_COMPOSE_UPLOAD_ROOTS", "").split(":") if x]
+    if not roots or not any(local == root or root in local.parents for root in roots):
+        raise ValueError("local_path must be inside a CF_COMPOSE_UPLOAD_ROOTS root")
+    cap = int(os.environ.get("CF_COMPOSE_UPLOAD_MAX_BYTES", str(200 * 1024 * 1024)))
+    files, total = upload_manifest(local, cap)
+    preview = {"preview": True, "file_count": len(files), "total_bytes": total, "target_dir": target["directory"], "excluded": sorted(upload_manifest.__globals__["EXCLUDED_UPLOAD_PARTS"]), "delete": delete}
+    if not execute:
+        return preview
+    result = _audit_mutation("project.sync", project, True, lambda: upload_ssh(registry().get("machine", target["machine"]), local, target["directory"], delete))
+    return {**preview, **result, "preview": False}
+
+
+@mcp.tool(annotations=WRITE)
+def project_env_init(project: str, keys: dict[str, str], generate: list[str], execute: bool = False) -> dict:
+    """Create or extend a remote .env without returning generated values or storing them in the registry."""
+    target = registry().get("project", project)
+    if set(keys) & set(generate):
+        raise ValueError("A key cannot be both supplied and generated")
+    for key, value in keys.items():
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", key) or "\n" in value or "\r" in value:
+            raise ValueError("keys must be uppercase environment names and values cannot contain newlines")
+    for key in generate:
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", key):
+            raise ValueError("generate contains an invalid environment key")
+    requested = list(keys) + list(generate)
+    if not execute:
+        return {"preview": True, "keys": requested, "directory": target["directory"], "generated": generate}
+    machine = registry().get("machine", target["machine"])
+    assignments = [f"printf '%s\\n' {shlex.quote(k + '=' + v)}" for k, v in keys.items()]
+    assignments += [f"printf '%s=' {shlex.quote(k)}; openssl rand -hex 24" for k in generate]
+    script = " && ".join(assignments) or ":"
+    command = f"mkdir -p {shlex.quote(target['directory'])} && touch {shlex.quote(target['directory']+'/.env')} && chmod 600 {shlex.quote(target['directory']+'/.env')} && ({{ grep -E '^[A-Z_][A-Z0-9_]*=' {shlex.quote(target['directory']+'/.env')} || true; }} )"
+    # Use an awk-backed fixed key filter and append only missing requested names.
+    append = " && ".join(f"grep -q '^\\s*{k}=' {shlex.quote(target['directory']+'/.env')} || ( {assign} >> {shlex.quote(target['directory']+'/.env')} )" for k, assign in zip(requested, assignments))
+    command = f"if [ -f {shlex.quote(target['directory']+'/.env')} ]; then {append or ':'}; else {script} > {shlex.quote(target['directory']+'/.env')}; fi && chmod 600 {shlex.quote(target['directory']+'/.env')}"
+    result = _audit_mutation("project.env_init", project, True, lambda: run_ssh(machine, command))
+    return {"preview": False, "keys": requested, **result}
+
+
+def _hostname(value: str) -> str:
+    if len(value) > 253 or not re.fullmatch(r"(?=.{1,253}\Z)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", value):
+        raise ValueError("Invalid DNS hostname")
+    return value.lower()
+
+
+def _nginx_config(host, port, body):
+    return f"server {{\n    listen 80;\n    listen [::]:80;\n    server_name {host};\n    client_max_body_size {body}m;\n    location / {{\n        proxy_pass http://127.0.0.1:{port};\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Forwarded-Host $host;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n    }}\n}}\n"
+
+
+def _path_env(key, default):
+    value = os.environ.get(key, default)
+    if not value.startswith("/") or any(c in value for c in "\n\r;|&"):
+        raise ValueError(f"{key} must be an absolute binary path")
+    return value
+
+
+@mcp.tool(annotations=WRITE)
+def nginx_site(machine: str, hostname: str, upstream_port: int, max_body_mb: int = 5, execute: bool = False, replace: bool = False) -> dict:
+    """Preview or install a fixed nginx reverse proxy site, testing before reload and rolling back failed new sites."""
+    host = _hostname(hostname)
+    if not 1024 <= upstream_port <= 65535 or not 1 <= max_body_mb <= 100:
+        raise ValueError("upstream_port must be 1024-65535 and max_body_mb must be 1-100")
+    config = _nginx_config(host, upstream_port, max_body_mb)
+    result = {"preview": True, "hostname": host, "config": config}
+    if not execute:
+        return result
+    machine_data = registry().get("machine", machine)
+    path = f"/etc/nginx/sites-available/{host}"; link = f"/etc/nginx/sites-enabled/{host}"
+    if not replace and run_ssh(machine_data, f"test ! -e {shlex.quote(path)}")["exit_code"] != 0:
+        raise ValueError("nginx site already exists; set replace=true to overwrite")
+    encoded = config.encode().hex()
+    sudo = _path_env("CF_COMPOSE_SUDO", "/usr/bin/sudo")
+    tee = _path_env("CF_COMPOSE_TEE", "/usr/bin/tee")
+    ln = _path_env("CF_COMPOSE_LN", "/usr/bin/ln")
+    nginx = _path_env("CF_COMPOSE_NGINX", "/usr/sbin/nginx")
+    systemctl = _path_env("CF_COMPOSE_SYSTEMCTL", "/usr/bin/systemctl")
+    write = f"printf %s {encoded} | {sudo} -n {tee} {shlex.quote(path)} >/dev/null && {sudo} -n {ln} -sf {shlex.quote(path)} {shlex.quote(link)} && {sudo} -n {nginx} -t"
+    tested = run_ssh(machine_data, write)
+    if tested["exit_code"] != 0:
+        run_ssh(machine_data, f"{sudo} -n /usr/bin/rm -f {shlex.quote(link)} {shlex.quote(path)}")
+        return {**result, "preview": False, "outcome": "failed", "nginx_test": tested}
+    reloaded = run_ssh(machine_data, f"{sudo} -n {systemctl} reload nginx")
+    return {**result, "preview": False, "outcome": reloaded["outcome"], "nginx_test": tested, "reload": reloaded}
+
+
+@mcp.tool(annotations=WRITE)
+def certbot_issue(machine: str, hostname: str, email: str, execute: bool = False) -> dict:
+    """Preview or issue a Let's Encrypt certificate through certbot's nginx plugin."""
+    host = _hostname(hostname)
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ValueError("Invalid email address")
+    sudo = _path_env("CF_COMPOSE_SUDO", "/usr/bin/sudo")
+    certbot = _path_env("CF_COMPOSE_CERTBOT", "/usr/bin/certbot")
+    command = f"{sudo} -n {certbot} --nginx -d {shlex.quote(host)} --redirect --non-interactive --agree-tos -m {shlex.quote(email)}"
+    if not execute:
+        return {"preview": True, "hostname": host, "command": command}
+    result = _audit_mutation("certbot.issue", machine + "/" + host, True, lambda: run_ssh(registry().get("machine", machine), command))
+    return {"preview": False, **result}
+
+
+@mcp.tool(annotations=READ)
+def http_check(url: str) -> dict:
+    """GET a URL and return only its status code and final URL."""
+    if not re.fullmatch(r"https?://[^\s]+", url):
+        raise ValueError("URL must use http or https")
+    try:
+        response = httpx.get(url, timeout=10, follow_redirects=True)
+    except httpx.RequestError:
+        raise ValueError("HTTP check failed or timed out") from None
+    return {"status_code": response.status_code, "final_url": str(response.url)}
 
 
 @mcp.tool(annotations=READ)

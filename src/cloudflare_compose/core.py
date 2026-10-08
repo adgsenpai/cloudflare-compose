@@ -7,6 +7,8 @@ import shlex
 import sqlite3
 import subprocess
 import tempfile
+import tarfile
+import io
 from pathlib import Path, PurePosixPath
 
 import httpx
@@ -95,17 +97,63 @@ class Cloudflare:
 
 
 def compose_command(project, action, service=None, tail=100):
-    commands = {"status": ["ps", "--format", "json"], "logs": ["logs", "--no-color", "--tail", str(tail)], "validate": ["config", "--quiet"], "pull": ["pull"], "up": ["up", "-d"], "stop": ["stop"], "restart": ["restart"], "down": ["down"]}
+    commands = {"status": ["ps", "--format", "json"], "logs": ["logs", "--no-color", "--tail", str(tail)], "validate": ["config", "--quiet"], "pull": ["pull"], "build": ["up", "-d", "--build", "--remove-orphans"], "up": ["up", "-d"], "stop": ["stop"], "restart": ["restart"], "down": ["down"]}
     if action not in commands:
         raise ValueError("Unsupported Compose action")
     if not 1 <= tail <= 1000:
         raise ValueError("Log tail must be between 1 and 1000")
     args = ["docker", "compose", "--project-directory", project["directory"], "-p", project["project_name"], "-f", project["compose_file"], *commands[action]]
     if service:
-        if action in ("down", "validate"):
+        if action in ("down", "validate", "build"):
             raise ValueError("This action does not accept a service")
         args.append(name(service))
     return shlex.join(args)
+
+
+EXCLUDED_UPLOAD_PARTS = {".env", "backups", "node_modules", ".git", ".next"}
+
+
+def upload_manifest(local: Path, cap: int):
+    files, total = [], 0
+    if local.is_file() and local.name.endswith((".tar.gz", ".tgz")):
+        with tarfile.open(local, "r:gz") as archive:
+            for member in archive.getmembers():
+                parts = PurePosixPath(member.name).parts
+                if any(p in EXCLUDED_UPLOAD_PARTS for p in parts) or not member.isfile():
+                    continue
+                total += member.size; files.append(member.name)
+    elif local.is_dir():
+        for path in local.rglob("*"):
+            rel = path.relative_to(local)
+            if not path.is_file() or any(p in EXCLUDED_UPLOAD_PARTS for p in rel.parts):
+                continue
+            total += path.stat().st_size; files.append(str(rel))
+    else:
+        raise ValueError("local_path must be a directory or .tar.gz archive")
+    if total > cap:
+        raise ValueError(f"Upload exceeds {cap} byte limit")
+    return files, total
+
+
+def upload_ssh(machine, local: Path, directory: str, delete: bool):
+    excludes = ["--exclude=" + x for x in EXCLUDED_UPLOAD_PARTS]
+    if local.is_file():
+        source = shlex.join(["cat", str(local)])
+    else:
+        source = shlex.join(["tar", "-C", str(local), "-czf", "-", ".", *excludes])
+    extract = shlex.join(["mkdir", "-p", directory]) + " && " + shlex.join(["tar", "-xzf", "-", "-C", directory, *excludes])
+    if delete:
+        # Delete only files absent from the local manifest; protected paths are never candidates.
+        keep = upload_manifest(local, 200 * 1024 * 1024)[0]
+        cases = " ".join(shlex.quote(x) for x in keep)
+        extract += " && KEEP=" + shlex.quote(" " + cases + " ") + "; for f in $(find " + shlex.quote(directory) + " -type f); do r=${f#" + shlex.quote(directory + "/") + "}; case \" $KEEP \" in *\" $r \"*) ;; *) rm -f -- \"$f\" ;; esac; done"
+    command = source + " | " + shlex.join(ssh_args(machine, extract))
+    try:
+        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120, check=False)
+    except subprocess.TimeoutExpired:
+        return {"exit_code": None, "outcome": "unknown", "output": "SSH upload timed out; inspect the remote project before retrying."}
+    output = result.stdout[:32768].decode(errors="replace")
+    return {"exit_code": result.returncode, "outcome": "success" if result.returncode == 0 else "failed", "output": output, "truncated": len(result.stdout) > 32768}
 
 
 def ssh_args(machine, command):

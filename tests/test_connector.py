@@ -41,6 +41,45 @@ def test_shell_quoting():
     assert args[7] == p["compose_file"]
     with pytest.raises(ValueError):
         compose_command(p, "up", "--build")
+    assert "--build" in compose_command(p, "build")
+
+
+def test_project_sync_root_and_exclusions(db, tmp_path, monkeypatch):
+    db.add("machine", "host", {})
+    server.project_add("web", "host", "/srv/web", "/srv/web/compose.yaml", "web")
+    source = tmp_path / "source"; source.mkdir()
+    (source / "app.py").write_text("x")
+    (source / ".env").write_text("SECRET=x")
+    (source / "node_modules").mkdir(); (source / "node_modules/x").write_text("x")
+    monkeypatch.setenv("CF_COMPOSE_UPLOAD_ROOTS", str(tmp_path))
+    preview = server.project_sync("web", str(source))
+    assert preview["file_count"] == 1
+    assert ".env" in preview["excluded"]
+    with pytest.raises(ValueError):
+        server.project_sync("web", "/tmp/outside")
+
+
+def test_env_preview_never_contains_generated_values(db):
+    db.add("machine", "host", {})
+    server.project_add("web", "host", "/srv/web", "/srv/web/compose.yaml", "web")
+    result = server.project_env_init("web", {"PUBLIC": "ok"}, ["SECRET"])
+    assert result["preview"] and result["keys"] == ["PUBLIC", "SECRET"]
+    assert "openssl" not in str(result)
+
+
+def test_nginx_validation_and_preview(db):
+    db.add("machine", "host", {})
+    result = server.nginx_site("host", "app.example.com", 8080)
+    assert result["preview"] and "proxy_pass http://127.0.0.1:8080" in result["config"]
+    with pytest.raises(ValueError):
+        server.nginx_site("host", "bad host", 8080)
+    with pytest.raises(ValueError):
+        server.nginx_site("host", "app.example.com", 80)
+
+
+def test_http_check(monkeypatch):
+    monkeypatch.setattr(server.httpx, "get", lambda *a, **k: type("R", (), {"status_code": 200, "url": "https://example.com/final"})())
+    assert server.http_check("https://example.com")["status_code"] == 200
 
 
 def test_machine_options_and_rejection(db, tmp_path):

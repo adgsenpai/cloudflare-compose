@@ -3,7 +3,7 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "cloudflare-compose"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local MCP infrastructure connector for Cloudflare and Compose over SSH"
 requires-python = ">=3.11"
 dependencies = ["mcp>=1.20,<2", "httpx>=0.28,<1"]

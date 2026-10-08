@@ -20,6 +20,16 @@ Application logs and DNS record contents can contain secrets. These tool results
 
 The current transport is local stdio. There is no authenticated HTTP endpoint bundled in this release. Do not publish a raw unauthenticated bridge to this server. Remote integrations require an authenticated gateway with per-user authorization and an appropriate secret-management design.
 
+## Optional nginx/certbot sudo policy
+
+The operator may install a narrowly scoped rule on the registered machine. The exact paths must match `which` on that machine; this example is for user `adgsenpai`:
+
+```sudoers
+adgsenpai ALL=(root) NOPASSWD: /usr/bin/tee /etc/nginx/sites-available/*, /usr/bin/ln -sf /etc/nginx/sites-available/* /etc/nginx/sites-enabled/*, /usr/bin/rm -f /etc/nginx/sites-enabled/*, /usr/bin/rm -f /etc/nginx/sites-available/*, /usr/sbin/nginx -t, /usr/bin/systemctl reload nginx, /usr/bin/certbot --nginx *
+```
+
+The tools use `sudo -n`; they never prompt for or transmit a sudo password. Install this policy manually and verify it with `sudo -n -l`. Uploads are limited to `CF_COMPOSE_UPLOAD_MAX_BYTES` (200 MiB by default) and roots listed in `CF_COMPOSE_UPLOAD_ROOTS`. Upload exclusions are always applied, including when deletion is requested. Generated `.env` values are created on the server with OpenSSL and are never returned to the model or written to audit rows.
+
 ## Reporting vulnerabilities
 
 Use GitHub's private vulnerability reporting feature in this repository when enabled. Do not put credentials, private endpoints or exploit details in public issues. If private reporting is unavailable, open a minimal issue asking for a private contact channel without sensitive details.

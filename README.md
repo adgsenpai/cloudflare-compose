@@ -40,7 +40,8 @@ Cloudflare and SSH are independent adapters. A machine can host workloads for se
 |---|---|
 | Registry | `inventory`, `profile_add`, `machine_add`, `project_add` |
 | SSH | `machine_check` verifies connection and Compose version |
-| Compose | `compose_run`: status, logs, validate, pull, up, stop, restart, down |
+| Compose | `compose_run`: status, logs, validate, pull, build, up, stop, restart, down |
+| Deployment | `project_sync`, `project_env_init`, `nginx_site`, `certbot_issue`, `http_check` |
 | Account | `cloudflare_account` retrieves selected account |
 | Zones | `cloudflare_zones` lists account-scoped zones |
 | DNS | `cloudflare_dns_list`, `cloudflare_dns_write` create/update/delete A, AAAA, CNAME, TXT, MX |
