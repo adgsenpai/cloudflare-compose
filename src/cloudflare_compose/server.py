@@ -185,7 +185,8 @@ def nginx_site(machine: str, hostname: str, upstream_port: int, max_body_mb: int
     ln = _path_env("CF_COMPOSE_LN", "/usr/bin/ln")
     nginx = _path_env("CF_COMPOSE_NGINX", "/usr/sbin/nginx")
     systemctl = _path_env("CF_COMPOSE_SYSTEMCTL", "/usr/bin/systemctl")
-    write = f"printf %s {shlex.quote(encoded)} | /usr/bin/base64 -d | {sudo} -n {tee} {shlex.quote(path)} >/dev/null && {sudo} -n {ln} -sf {shlex.quote(path)} {shlex.quote(link)} && {sudo} -n {nginx} -t"
+    base64_bin = _path_env("CF_COMPOSE_BASE64", "/usr/bin/base64")
+    write = f"printf %s {shlex.quote(encoded)} | {base64_bin} -d | {sudo} -n {tee} {shlex.quote(path)} >/dev/null && {sudo} -n {ln} -sf {shlex.quote(path)} {shlex.quote(link)} && {sudo} -n {nginx} -t"
     tested = run_ssh(machine_data, write)
     if tested["exit_code"] != 0:
         run_ssh(machine_data, f"{sudo} -n /usr/bin/rm -f {shlex.quote(link)} {shlex.quote(path)}")

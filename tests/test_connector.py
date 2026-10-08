@@ -180,3 +180,23 @@ def test_mcp_stdio_round_trip(tmp_path):
                 result = await session.call_tool("inventory", {})
                 assert "CF_WORK_TOKEN" in result.content[0].text
     asyncio.run(check())
+
+
+def test_nginx_site_writes_decoded_config(tmp_path, monkeypatch):
+    """Regression: the remote command must decode the payload, so the file nginx reads is the config itself."""
+    import subprocess
+    monkeypatch.setenv("CF_COMPOSE_HOME", str(tmp_path))
+    key = tmp_path / "id"; key.write_text("k"); kh = tmp_path / "kh"; kh.write_text("h")
+    server.machine_add("vm", "vm.example.com", "deploy", str(key), str(kh))
+    commands = []
+    def fake_run(machine, command):
+        commands.append(command)
+        return {"exit_code": 0, "outcome": "success", "output": "", "truncated": False}
+    monkeypatch.setattr(server, "run_ssh", fake_run)
+    result = server.nginx_site("vm", "app.example.com", 3007, execute=True)
+    write = next(c for c in commands if " -t" in c and "tee" in c)
+    # run the decode half of the pipeline locally and compare with the rendered config
+    decode = write.split(" | ")[0] + " | base64 -d"
+    out = subprocess.run(["sh", "-c", decode.replace("/usr/bin/base64", "base64")], capture_output=True, text=True, check=True).stdout
+    assert out == result["config"]
+    assert out.startswith("server {") and "proxy_pass http://127.0.0.1:3007;" in out
