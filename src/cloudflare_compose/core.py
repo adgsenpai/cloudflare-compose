@@ -147,13 +147,21 @@ def upload_ssh(machine, local: Path, directory: str, delete: bool):
         keep = upload_manifest(local, 200 * 1024 * 1024)[0]
         cases = " ".join(shlex.quote(x) for x in keep)
         extract += " && KEEP=" + shlex.quote(" " + cases + " ") + "; for f in $(find " + shlex.quote(directory) + " -type f); do r=${f#" + shlex.quote(directory + "/") + "}; case \" $KEEP \" in *\" $r \"*) ;; *) rm -f -- \"$f\" ;; esac; done"
-    command = source + " | " + shlex.join(ssh_args(machine, extract))
+    tar_args = ["cat", str(local)] if local.is_file() else ["tar", "-C", str(local), "-czf", "-", ".", *excludes]
     try:
-        result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120, check=False)
+        tar_proc = subprocess.Popen(tar_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ssh_proc = subprocess.Popen(ssh_args(machine, extract), stdin=tar_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        tar_proc.stdout.close()
+        raw_output, _ = ssh_proc.communicate(timeout=120)
+        tar_code = tar_proc.wait(timeout=5)
+        result_code = ssh_proc.returncode if ssh_proc.returncode else tar_code
     except subprocess.TimeoutExpired:
+        for process in (locals().get("ssh_proc"), locals().get("tar_proc")):
+            if process and process.poll() is None:
+                process.kill()
         return {"exit_code": None, "outcome": "unknown", "output": "SSH upload timed out; inspect the remote project before retrying."}
-    output = result.stdout[:32768].decode(errors="replace")
-    return {"exit_code": result.returncode, "outcome": "success" if result.returncode == 0 else "failed", "output": output, "truncated": len(result.stdout) > 32768}
+    output = raw_output[:32768].decode(errors="replace")
+    return {"exit_code": result_code, "outcome": "success" if result_code == 0 else "failed", "output": output, "truncated": len(raw_output) > 32768}
 
 
 def ssh_args(machine, command):
