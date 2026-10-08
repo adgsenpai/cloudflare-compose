@@ -1,0 +1,37 @@
+# Python / build artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.coverage
+htmlcov/
+# Credentials and local runtime state
+.env
+.env.*
+!.env.example
+credentials*
+secrets*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+known_hosts*
+authorized_keys*
+*.sqlite*
+*.db
+*.db-*
+state/
+.ssh/
+*.log
+*.backup*
+mcp.local.json
+# Editor / OS files
+.DS_Store
+.idea/
+.vscode/

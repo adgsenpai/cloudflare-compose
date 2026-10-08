@@ -1,0 +1,18 @@
+{
+  "name": "cloudflare-compose",
+  "version": "0.1.0",
+  "description": "Cloudflare account profiles and Docker Compose over SSH",
+  "author": {
+    "name": "adgsenpai"
+  },
+  "interface": {
+    "displayName": "Cloudflare Compose",
+    "shortDescription": "Use Cloudflare Compose in Codex.",
+    "longDescription": "Manage Cloudflare profiles, DNS, tunnels, machines and registered Docker Compose projects through a local MCP server.",
+    "developerName": "adgsenpai",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Help me use Cloudflare Compose."
+  },
+  "mcpServers": "./.mcp.json"
+}

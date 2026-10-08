@@ -1,0 +1,1 @@
+{"mcpServers":{"cloudflare-compose":{"type":"stdio","command":"${PLUGIN_ROOT}/.venv/bin/python","args":["-m","cloudflare_compose.server"],"cwd":"${PLUGIN_ROOT}"}}}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cloudflare-compose": {
+      "command": "/absolute/path/to/cloudflare-compose/.venv/bin/python",
+      "args": ["-m", "cloudflare_compose.server"]
+    }
+  }
+}
