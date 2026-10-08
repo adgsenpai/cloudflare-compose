@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cloudflare Compose MCP</title>
+  <meta name="description" content="A secure, preview-first MCP server for Cloudflare and Docker Compose over SSH.">
+  <style>
+    :root{color-scheme:dark;--bg:#09111f;--panel:#101c30;--text:#e8eef8;--muted:#a9b7ca;--blue:#7dd3fc;--green:#86efac;--line:#243652}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,#173861 0,#09111f 45%);font:16px/1.6 system-ui,sans-serif;color:var(--text)}
+    main{max-width:1060px;margin:auto;padding:70px 24px}.eyebrow{color:var(--green);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:.78rem}h1{font-size:clamp(2.5rem,7vw,5rem);line-height:1.02;max-width:850px;margin:16px 0}h2{margin-top:0;font-size:1.7rem}p{color:var(--muted);max-width:720px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin:30px 0 56px}.button{border:1px solid var(--blue);border-radius:10px;padding:11px 17px;color:var(--text);text-decoration:none}.button.primary{background:var(--blue);color:#06101d;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin:24px 0 60px}.card{background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:14px;padding:22px}.card strong{display:block;color:var(--blue);margin-bottom:5px}code{color:var(--green)}footer{border-top:1px solid var(--line);padding-top:22px;color:var(--muted);font-size:.9rem}
+  </style>
+</head>
+<body><main>
+  <div class="eyebrow">Cloudflare Compose MCP · v0.2.0</div>
+  <h1>Infrastructure tools with a review step built in.</h1>
+  <p>Manage Cloudflare accounts, DNS, tunnels, Docker Compose projects and nginx hosts from Claude, Codex or another MCP client. Every write starts as a preview. Secrets stay outside the registry and repository.</p>
+  <div class="actions"><a class="button primary" href="https://github.com/adgsenpai/cloudflare-compose">View on GitHub</a><a class="button" href="https://github.com/adgsenpai/cloudflare-compose/blob/main/docs/clients.md">Connect a client</a></div>
+  <section class="grid">
+    <article class="card"><strong>Cloudflare</strong>Account profiles, scoped zones, DNS records and remotely managed tunnels.</article>
+    <article class="card"><strong>Compose over SSH</strong>Validate, build, restart, inspect logs and deploy fixed Compose actions on registered machines.</article>
+    <article class="card"><strong>Deployment flow</strong>Sync source, initialize remote environment values, configure nginx, issue TLS and check the result.</article>
+    <article class="card"><strong>Safety defaults</strong>Strict host keys, no arbitrary shell tool, capped output, audit outcomes and explicit <code>execute=true</code>.</article>
+  </section>
+  <section><h2>Build notes</h2><p>Cloudflare Compose is a local stdio server. Claude Desktop, Claude Code and Codex can run it on the operator’s machine. A hosted ChatGPT or claude.ai connector needs a separate authenticated remote transport; this project does not publish credentials or an anonymous gateway.</p></section>
+  <section><h2>Latest release</h2><p><a href="https://github.com/adgsenpai/cloudflare-compose/releases/tag/v0.2.0">v0.2.0</a> adds project synchronization, server-side environment initialization, Compose builds, nginx provisioning, Certbot issuance and HTTP checks.</p></section>
+  <footer>Built for operators who want infrastructure automation to remain inspectable. <a href="https://github.com/adgsenpai/cloudflare-compose/blob/main/SECURITY.md">Read the security model.</a></footer>
+</main></body></html>
